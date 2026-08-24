@@ -1,0 +1,67 @@
+name: Daily refresh (price / yield)
+
+on:
+  schedule:
+    # 10:10 UTC = 18:10 Asia/Taipei
+    - cron: "10 10 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: tpex500-daily-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: "Checkout repo (single-branch: gh-pages is the default branch)"
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install --quiet openpyxl
+
+      - name: Prepare working files
+        run: |
+          mkdir -p /tmp/site_build
+          cp data/seed500.txt /tmp/seed500.txt
+          wc -l /tmp/seed500.txt
+
+      - name: Fetch latest prices (FinMind primary, Yahoo fallback)
+        run: python3 scripts/fetch_prices.py /tmp/seed500.txt /tmp/fresh_prices.txt
+
+      - name: Merge seed data with fresh prices
+        run: python3 scripts/merge500.py
+
+      - name: Build index.html
+        run: python3 scripts/build_html_500.py
+
+      - name: Patch data-date string in HTML
+        run: |
+          TODAY_SLASH=$(date -u -d '+8 hours' +%Y/%m/%d)
+          sed -i "s#2026/08/21#$TODAY_SLASH#g" /tmp/site_build/index.html
+
+      - name: Build taiwan_stocks_top500.xlsx
+        run: python3 scripts/build_xlsx_500.py
+
+      - name: Publish
+        run: |
+          cp /tmp/site_build/index.html .
+          cp /tmp/site_build/taiwan_stocks_top500.xlsx .
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add index.html taiwan_stocks_top500.xlsx
+          TODAY=$(date -u -d '+8 hours' +%Y-%m-%d)
+          if git diff --cached --quiet; then
+            echo "nothing to commit (prices unchanged from yesterday)"
+          else
+            git commit -m "Daily refresh: price/yield $TODAY"
+            git push origin HEAD:gh-pages
+          fi
