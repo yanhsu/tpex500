@@ -63,5 +63,13 @@ jobs:
             echo "nothing to commit (prices unchanged from yesterday)"
           else
             git commit -m "Daily refresh: price/yield $TODAY"
-            git push origin HEAD:gh-pages
+            for i in 1 2 3; do
+              git pull --rebase origin gh-pages || exit 1
+              if git push origin HEAD:gh-pages; then
+                exit 0
+              fi
+              echo "push rejected, retrying ($i/3)..."
+            done
+            echo "push failed after 3 attempts"
+            exit 1
           fi
